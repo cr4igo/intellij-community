@@ -108,7 +108,7 @@ class DistributionJARsBuilder {
       withModule("intellij.platform.bootstrap")
       withModule("intellij.java.guiForms.rt")
       withModule("intellij.platform.icons")
-      withModule("intellij.platform.boot")
+      withModule("intellij.platform.boot", "bootstrap.jar")
       withModule("intellij.platform.resources", "resources.jar")
       withModule("intellij.platform.colorSchemes", "resources.jar")
       withModule("intellij.platform.resources.en", productLayout.mainJarName)
@@ -538,7 +538,7 @@ class DistributionJARsBuilder {
                                       "most probably it means that '$module' isn't include into the product distribution so it makes no sense to define excludes for it.")
         }
         if (createFileSet(pattern, moduleOutput).size() == 0) {
-          buildContext.messages.error("Incorrect exludes for module '$module': nothing matches to $pattern in the module output")
+          buildContext.messages.error("Incorrect excludes for module '$module': nothing matches to $pattern in the module output at $moduleOutput")
         }
       }
     }

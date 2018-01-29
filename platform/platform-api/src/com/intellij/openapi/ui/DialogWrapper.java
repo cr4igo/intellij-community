@@ -1,22 +1,9 @@
-/*
- * Copyright 2000-2017 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+// Copyright 2000-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
 package com.intellij.openapi.ui;
 
 import com.intellij.CommonBundle;
 import com.intellij.icons.AllIcons;
+import com.intellij.ide.actions.ActionsCollector;
 import com.intellij.ide.ui.UISettings;
 import com.intellij.idea.ActionsBundle;
 import com.intellij.openapi.Disposable;
@@ -62,6 +49,7 @@ import javax.swing.border.Border;
 import javax.swing.border.CompoundBorder;
 import javax.swing.border.EmptyBorder;
 import javax.swing.plaf.UIResource;
+import javax.swing.text.JTextComponent;
 import java.awt.*;
 import java.awt.event.*;
 import java.util.*;
@@ -1013,6 +1001,7 @@ public abstract class DialogWrapper {
    * @see #doCancelAction
    */
   public void doCancelAction(AWTEvent source) {
+    recordAction("DialogCancelAction", source);
     doCancelAction();
   }
 
@@ -1853,6 +1842,7 @@ public abstract class DialogWrapper {
 
     @Override
     protected void doAction(ActionEvent e) {
+      recordAction("DialogOkAction");
       List<ValidationInfo> infoList = doValidateAll();
       if (!infoList.isEmpty()) {
         ValidationInfo info = infoList.get(0);
@@ -1868,6 +1858,17 @@ public abstract class DialogWrapper {
         return;
       }
       doOKAction();
+    }
+  }
+
+  private void recordAction(String name) {
+    recordAction(name, EventQueue.getCurrentEvent());
+  }
+
+  private void recordAction(String name, AWTEvent event) {
+    if (event instanceof KeyEvent) {
+      String shortcut = KeymapUtil.getKeystrokeText(KeyStroke.getKeyStrokeForEvent((KeyEvent)event));
+      ActionsCollector.getInstance().record(name + " " + shortcut);
     }
   }
 
@@ -2042,27 +2043,9 @@ public abstract class DialogWrapper {
   }
 
   private Component getFocusable(Component source) {
-    if (source == null) {
-      return null;
-    } else if (source instanceof JScrollPane) {
-      return ((JScrollPane)source).getViewport().getView();
-    } else if (source instanceof JComboBox && ((JComboBox)source).isEditable()) {
-      return ((JComboBox)source).getEditor().getEditorComponent();
-    } else if (source instanceof JSpinner) {
-      Container c = ((JSpinner)source).getEditor();
-      synchronized (c.getTreeLock()) {
-        return c.getComponent(0);
-      }
-    } else if (source instanceof Container) {
-      Container container = (Container)source;
-      List<Component> cl;
-      synchronized (container.getTreeLock()) {
-        cl = Arrays.asList(container.getComponents());
-      }
-      return cl.stream().filter(c -> c.isFocusable()).count() > 1 ? null : source;
-    } else {
-      return source;
-    }
+    return source instanceof JComboBox && !((JComboBox)source).isEditable() ?
+           source :
+           UIUtil.uiTraverser(source).filter(c -> c instanceof JTextComponent && c.isFocusable()).toList().stream().findFirst().orElse(null);
   }
 
   private void updateSize() {
