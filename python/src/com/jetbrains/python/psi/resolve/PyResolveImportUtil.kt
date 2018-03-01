@@ -54,7 +54,9 @@ import com.jetbrains.python.sdk.PythonSdkType
  */
 
 /**
- * Resolves a qualified [name] a list of modules / top-level elements according to the [context].
+ * Resolves a qualified [name] to the list of packages and modules according to the [context].
+ *
+ * @see resolveTopLevelMember
  */
 fun resolveQualifiedName(name: QualifiedName, context: PyQualifiedNameResolveContext): List<PsiElement> {
   checkAccess()
@@ -80,7 +82,7 @@ fun resolveQualifiedName(name: QualifiedName, context: PyQualifiedNameResolveCon
 
   val foreignResults = foreignResults(name, context)
   val pythonResults = listOf(relativeResults,
-                             resultsFromRoots(name, context),
+                             resolveModuleFromRoots(name, context),
                              relativeResultsFromSkeletons(name, context)).flatten().distinct()
   val allResults = pythonResults + foreignResults
   val results = if (name.componentCount > 0) findFirstResults(pythonResults, context.module) + foreignResults else allResults
@@ -90,6 +92,21 @@ fun resolveQualifiedName(name: QualifiedName, context: PyQualifiedNameResolveCon
   }
 
   return results
+}
+
+/**
+ * Resolves a qualified [name] to the list of packages and modules with Python semantics according to the [context].
+ */
+private fun resolveModuleFromRoots(name: QualifiedName, context: PyQualifiedNameResolveContext): List<PsiElement> {
+  val head = name.removeTail(name.componentCount - 1)
+  val nameNoHead = name.removeHead(1)
+  return nameNoHead.components.fold(resultsFromRoots(head, context)) { results, component ->
+    findFirstResults(results, context.module)
+      .asSequence()
+      .filterIsInstance<PsiDirectory>()
+      .flatMap { resolveModuleAt(QualifiedName.fromComponents(component), it, context).asSequence() }
+      .toList()
+  }
 }
 
 /**
@@ -231,7 +248,7 @@ private fun findFirstResults(results: List<PsiElement>, module: Module?) =
 private fun isNamespacePackage(element: PsiElement): Boolean {
   if (element is PsiDirectory) {
     val level = PyUtil.getLanguageLevelForVirtualFile(element.project, element.virtualFile)
-    if (level.isAtLeast(LanguageLevel.PYTHON33)) {
+    if (!level.isPython2) {
       return PyUtil.turnDirIntoInit(element) == null
     }
   }
@@ -246,6 +263,12 @@ private fun resolveWithRelativeLevel(name: QualifiedName, context : PyQualifiedN
   return emptyList()
 }
 
+/**
+ * Collects resolve results from all roots available.
+ *
+ * The retuning {@code List<PsiElement>} contains all elements {@code name} references
+ * and does not take into account root order.
+ */
 private fun resultsFromRoots(name: QualifiedName, context: PyQualifiedNameResolveContext): List<PsiElement> {
   if (context.withoutRoots) {
     return emptyList()
@@ -337,7 +360,7 @@ private fun isRelativeImportResult(name: QualifiedName, directory: PsiDirectory,
     return true
   }
   else {
-    val py2 = LanguageLevel.forElement(directory).isOlderThan(LanguageLevel.PYTHON30)
+    val py2 = LanguageLevel.forElement(directory).isPython2
     return context.relativeLevel == 0 && py2 && PyUtil.isPackage(directory, false, null) &&
         result is PsiFileSystemItem && name != QualifiedNameFinder.findShortestImportableQName(result)
   }

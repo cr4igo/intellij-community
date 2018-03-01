@@ -45,7 +45,7 @@ public class PyTypingTest extends PyTestCase {
   @Override
   public void setUp() throws Exception {
     super.setUp();
-    setLanguageLevel(LanguageLevel.PYTHON32);
+    setLanguageLevel(LanguageLevel.PYTHON34);
   }
 
   @Override
@@ -273,6 +273,15 @@ public class PyTypingTest extends PyTestCase {
            "\n" +
            "def foo(expr: Optional[int]):\n" +
            "    pass\n");
+  }
+
+  // PY-28032
+  public void testOptionalOfAny() {
+    doTest("Optional[Any]",
+           "from typing import Optional, Any\n" +
+           "\n" +
+           "x = None  # type: Optional[Any]\n" +
+           "expr = x\n");
   }
 
   public void testOptionalFromDefaultNone() {
@@ -775,6 +784,30 @@ public class PyTypingTest extends PyTestCase {
            "x: str\n" +
            "x = baz()\n" +
            "expr = x");
+  }
+
+  // PY-16412
+  public void testLocalVariableAnnotationAheadOfTimeExplicitAny() {
+    doTest("Any",
+           "from typing import Any\n" +
+           "\n" +
+           "def func(x):\n" +
+           "    var: Any\n" +
+           "    var = x\n" +
+           "    expr = var\n");
+  }
+
+  // PY-28032
+  public void testClassAttributeAnnotationExplicitAny() {
+    doTest("Any",
+           "from typing import Any\n" +
+           "\n" +
+           "class C:\n" +
+           "    attr: Any = None\n" +
+           "    \n" +
+           "    def m(self, x):\n" +
+           "        self.attr = x\n" +
+           "        expr = self.attr");
   }
 
   // PY-21864

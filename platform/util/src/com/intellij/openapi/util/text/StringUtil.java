@@ -1,16 +1,4 @@
-// Copyright 2000-2017 JetBrains s.r.o.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright 2000-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
 package com.intellij.openapi.util.text;
 
 import com.intellij.openapi.diagnostic.Logger;
@@ -21,6 +9,7 @@ import com.intellij.util.*;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.text.CharArrayUtil;
 import com.intellij.util.text.CharSequenceSubSequence;
+import com.intellij.util.text.MergingCharSequence;
 import com.intellij.util.text.StringFactory;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NonNls;
@@ -49,6 +38,16 @@ public class StringUtil extends StringUtilRt {
   @NonNls private static final Pattern EOL_SPLIT_PATTERN = Pattern.compile(" *(\r|\n|\r\n)+ *");
   @NonNls private static final Pattern EOL_SPLIT_PATTERN_WITH_EMPTY = Pattern.compile(" *(\r|\n|\r\n) *");
   @NonNls private static final Pattern EOL_SPLIT_DONT_TRIM_PATTERN = Pattern.compile("(\r|\n|\r\n)+");
+
+  @NotNull
+  public static MergingCharSequence replaceSubSequence(@NotNull CharSequence charSeq,
+                                                       int start,
+                                                       int end,
+                                                       @NotNull CharSequence replacement) {
+    return new MergingCharSequence(
+          new MergingCharSequence(charSeq.subSequence(0, start), replacement),
+          charSeq.subSequence(end, charSeq.length()));
+  }
 
   private static class MyHtml2Text extends HTMLEditorKit.ParserCallback {
     @NotNull private final StringBuilder myBuffer = new StringBuilder();
@@ -2674,7 +2673,7 @@ public class StringUtil extends StringUtilRt {
   @NotNull
   @Contract(pure = true)
   public static String tail(@NotNull String s, final int idx) {
-    return idx >= s.length() ? "" : s.substring(idx, s.length());
+    return idx >= s.length() ? "" : s.substring(idx);
   }
 
   /**
@@ -3038,6 +3037,14 @@ public class StringUtil extends StringUtilRt {
     return StringUtilRt.toLowerCase(a);
   }
 
+  @Contract(pure = true)
+  public static boolean isUpperCase(@NotNull CharSequence sequence) {
+    for (int i = 0; i < sequence.length(); i++) {
+      if (!Character.isUpperCase(sequence.charAt(i))) return false;
+    }
+    return true;
+  }
+
   @Nullable
   public static LineSeparator detectSeparators(@NotNull CharSequence text) {
     int index = indexOfAny(text, "\n\r");
@@ -3235,12 +3242,12 @@ public class StringUtil extends StringUtilRt {
     int lastEnd = 0;
     final StringBuilder sb = new StringBuilder(text.length());
     while (matcher.find()) {
-      sb.append(text.substring(lastEnd, matcher.start()));
+      sb.append(text, lastEnd, matcher.start());
       final char c = (char)Integer.parseInt(matcher.group().substring(2), 16);
       sb.append(c);
       lastEnd = matcher.end();
     }
-    sb.append(text.substring(lastEnd, text.length()));
+    sb.append(text.substring(lastEnd));
     return sb.toString();
   }
 

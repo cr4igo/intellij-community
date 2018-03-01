@@ -25,6 +25,7 @@ import com.intellij.openapi.editor.Document
 import com.intellij.openapi.editor.impl.DocumentImpl
 import com.intellij.openapi.editor.markup.RangeHighlighter
 import com.intellij.openapi.localVcs.UpToDateLineNumberProvider.ABSENT_LINE_NUMBER
+import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vcs.VcsBundle
@@ -63,8 +64,7 @@ abstract class LineStatusTrackerBase<R : Range> {
     vcsDocument.putUserData(UndoConstants.DONT_RECORD_UNDO, true)
     vcsDocument.setReadOnly(true)
 
-    documentTracker = DocumentTracker(vcsDocument, this.document)
-    documentTracker.addListener(MyLineTrackerListener())
+    documentTracker = DocumentTracker(vcsDocument, this.document, createDocumentTrackerHandler())
     Disposer.register(disposable, documentTracker)
   }
 
@@ -81,6 +81,8 @@ abstract class LineStatusTrackerBase<R : Range> {
 
   abstract protected fun Block.toRange(): R
 
+  protected open fun createDocumentTrackerHandler(): DocumentTracker.Handler = MyDocumentTrackerHandler()
+
 
   fun getRanges(): List<R>? {
     application.assertReadAccessAllowed()
@@ -92,6 +94,11 @@ abstract class LineStatusTrackerBase<R : Range> {
 
   @CalledInAwt
   fun setBaseRevision(vcsContent: CharSequence) {
+    setBaseRevision(vcsContent, null)
+  }
+
+  @CalledInAwt
+  protected fun setBaseRevision(vcsContent: CharSequence, beforeUnfreeze: (() -> Unit)?) {
     application.assertIsDispatchThread()
     if (isReleased) return
 
@@ -99,6 +106,8 @@ abstract class LineStatusTrackerBase<R : Range> {
       updateDocument(Side.LEFT) {
         vcsDocument.setText(vcsContent)
       }
+
+      beforeUnfreeze?.invoke()
     }
 
     if (!isInitialized) {
@@ -158,7 +167,7 @@ abstract class LineStatusTrackerBase<R : Range> {
   }
 
 
-  private inner class MyLineTrackerListener : DocumentTracker.Listener {
+  protected open inner class MyDocumentTrackerHandler : DocumentTracker.Handler {
     override fun onRangeRemoved(block: Block) {
       destroyHighlighter(block)
     }
@@ -184,6 +193,7 @@ abstract class LineStatusTrackerBase<R : Range> {
     }
 
     override fun onUnfreeze(side: Side) {
+      calcInnerRanges()
       installMissingHighlighters()
     }
 
@@ -194,7 +204,8 @@ abstract class LineStatusTrackerBase<R : Range> {
     }
 
     private fun calcInnerRanges() {
-      if (isDetectWhitespaceChangedLines()) {
+      if (isDetectWhitespaceChangedLines() &&
+          !documentTracker.isFrozen()) {
         for (block in blocks) {
           if (block.ourData.innerRanges == null) {
             block.ourData.innerRanges = calcInnerRanges(block)
@@ -259,6 +270,8 @@ abstract class LineStatusTrackerBase<R : Range> {
     if (!isValid() || block.range.isEmpty) return
     try {
       block.ourData.rangeHighlighter = renderer.createHighlighter(block.toRange())
+    }
+    catch (ignore: ProcessCanceledException) {
     }
     catch (e: Exception) {
       LOG.error(e)

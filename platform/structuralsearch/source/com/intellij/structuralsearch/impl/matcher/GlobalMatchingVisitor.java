@@ -1,4 +1,4 @@
-// Copyright 2000-2017 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
+// Copyright 2000-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
 package com.intellij.structuralsearch.impl.matcher;
 
 import com.intellij.dupLocator.AbstractMatchingVisitor;
@@ -18,10 +18,11 @@ import com.intellij.structuralsearch.impl.matcher.handlers.MatchingHandler;
 import com.intellij.structuralsearch.impl.matcher.handlers.SubstitutionHandler;
 import com.intellij.structuralsearch.plugin.ui.Configuration;
 import com.intellij.structuralsearch.plugin.util.SmartPsiPointer;
-import java.util.HashMap;
+import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -52,8 +53,9 @@ public class GlobalMatchingVisitor extends AbstractMatchingVisitor {
     return myResult;
   }
 
-  public void setResult(boolean result) {
-    this.myResult = result;
+  @Contract("true->true;false->false")
+  public boolean setResult(boolean result) {
+    return this.myResult = result;
   }
 
   public MatchContext getMatchContext() {
@@ -225,7 +227,7 @@ public class GlobalMatchingVisitor extends AbstractMatchingVisitor {
   }
 
   private void dispatchMatched(final List<PsiElement> matchedNodes, MatchResultImpl result) {
-    if (!matchContext.getOptions().isResultIsContextMatch() && doDispatch(result, result)) return;
+    if (doDispatch(result)) return;
 
     // There is no substitutions so show the context
 
@@ -233,15 +235,14 @@ public class GlobalMatchingVisitor extends AbstractMatchingVisitor {
     matchContext.getSink().newMatch(result);
   }
 
-  private boolean doDispatch(final MatchResult result, MatchResultImpl context) {
+  private boolean doDispatch(final MatchResult result) {
     boolean ret = false;
 
-    for (MatchResult r : result.getAllSons()) {
+    for (MatchResult r : result.getChildren()) {
       if ((r.isScopeMatch() && !r.isTarget()) || r.isMultipleMatch()) {
-        ret |= doDispatch(r, context);
+        ret |= doDispatch(r);
       }
       else if (r.isTarget()) {
-        ((MatchResultImpl)r).setContext(context);
         matchContext.getSink().newMatch(r);
         ret = true;
       }
@@ -258,23 +259,12 @@ public class GlobalMatchingVisitor extends AbstractMatchingVisitor {
       result.setMatchImage(match.getText());
     }
     else {
-
       for (final PsiElement matchStatement : matchedNodes) {
-        result.getMatches().add(new MatchResultImpl(
-            MatchResult.LINE_MATCH,
-            matchStatement.getText(),
-            new SmartPsiPointer(matchStatement),
-            true
-          )
-        );
+        result.addChild(new MatchResultImpl(MatchResult.LINE_MATCH, matchStatement.getText(), new SmartPsiPointer(matchStatement), false));
       }
 
-      result.setMatchRef(
-        new SmartPsiPointer(match)
-      );
-      result.setMatchImage(
-        match.getText()
-      );
+      result.setMatchRef(new SmartPsiPointer(match));
+      result.setMatchImage(match.getText());
       result.setName(MatchResult.MULTI_LINE_MATCH);
     }
   }

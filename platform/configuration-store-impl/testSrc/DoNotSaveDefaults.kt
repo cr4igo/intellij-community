@@ -81,18 +81,20 @@ class DoNotSaveDefaultsTest {
     propertyComponent.unsetValue("file.gist.reindex.count")
     // <property name="CommitChangeListDialog.DETAILS_SPLITTER_PROPORTION_2" value="1.0" />
     propertyComponent.unsetValue("CommitChangeListDialog.DETAILS_SPLITTER_PROPORTION_2")
+    propertyComponent.unsetValue("ts.lib.d.ts.version")
+    propertyComponent.unsetValue("nodejs_interpreter_path.stuck_in_default_project")
 
     val app = ApplicationManager.getApplication() as ApplicationImpl
     try {
       System.setProperty("store.save.use.modificationCount", "false")
-      app.doNotSave(false)
+      app.isSaveAllowed = true
       runInEdtAndWait {
         StoreUtil.save(componentManager.stateStore, null)
       }
     }
     finally {
       System.setProperty("store.save.use.modificationCount", useModCountOldValue ?: "false")
-      app.doNotSave(true)
+      app.isSaveAllowed = false
     }
 
     if (componentManager is Project) {

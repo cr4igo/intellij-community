@@ -71,9 +71,12 @@ public class StandardInstructionVisitor extends InstructionVisitor {
     if (dfaDest instanceof DfaVariableValue) {
       DfaVariableValue var = (DfaVariableValue) dfaDest;
 
-      final PsiModifierListOwner psi = var.getPsiVariable();
+      PsiModifierListOwner psi = var.getPsiVariable();
       boolean forceDeclaredNullity = !(psi instanceof PsiParameter && psi.getParent() instanceof PsiParameterList);
-      if (forceDeclaredNullity && var.getInherentNullability() == Nullness.NOT_NULL) {
+      if (psi instanceof PsiField && !psi.hasModifierProperty(PsiModifier.FINAL) && var.getInherentNullability() == Nullness.UNKNOWN) {
+        checkNotNullable(memState, dfaSource, NullabilityProblemKind.assigningNullableValueToNonAnnotatedField.problem(rValue));        
+      }
+      else if (forceDeclaredNullity && var.getInherentNullability() == Nullness.NOT_NULL) {
         checkNotNullable(memState, dfaSource, kind.problem(rValue));
       }
       if (!(psi instanceof PsiField) || !psi.hasModifierProperty(PsiModifier.VOLATILE)) {
@@ -334,10 +337,10 @@ public class StandardInstructionVisitor extends InstructionVisitor {
   }
 
   @NotNull
-  private DfaCallArguments popCall(MethodCallInstruction instruction,
-                                   DataFlowRunner runner,
-                                   DfaMemoryState memState,
-                                   boolean contractOnly) {
+  protected DfaCallArguments popCall(MethodCallInstruction instruction,
+                                     DataFlowRunner runner,
+                                     DfaMemoryState memState,
+                                     boolean contractOnly) {
     PsiMethod method = instruction.getTargetMethod();
     MutationSignature sig = MutationSignature.fromMethod(method);
     DfaValue[] argValues = popCallArguments(instruction, runner, memState, contractOnly, sig);
@@ -563,7 +566,9 @@ public class StandardInstructionVisitor extends InstructionVisitor {
 
   protected boolean checkNotNullable(DfaMemoryState state, DfaValue value, @Nullable NullabilityProblemKind.NullabilityProblem<?> problem) {
     boolean notNullable = state.checkNotNullable(value);
-    if (notNullable && !NullabilityProblemKind.passingNullableArgumentToNonAnnotatedParameter.isMyProblem(problem)) {
+    if (notNullable && 
+        !NullabilityProblemKind.passingNullableArgumentToNonAnnotatedParameter.isMyProblem(problem) &&
+        !NullabilityProblemKind.assigningNullableValueToNonAnnotatedField.isMyProblem(problem)) {
       DfaValueFactory factory = ((DfaMemoryStateImpl)state).getFactory();
       state.applyCondition(factory.createCondition(value, RelationType.NE, factory.getConstFactory().getNull()));
     }

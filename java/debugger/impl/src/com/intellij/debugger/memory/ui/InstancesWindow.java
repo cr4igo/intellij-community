@@ -17,6 +17,7 @@ package com.intellij.debugger.memory.ui;
 
 import com.intellij.debugger.DebuggerManager;
 import com.intellij.debugger.engine.DebugProcessImpl;
+import com.intellij.debugger.engine.DebuggerUtils;
 import com.intellij.debugger.engine.JavaValue;
 import com.intellij.debugger.engine.SuspendContextImpl;
 import com.intellij.debugger.engine.evaluation.EvaluationContext;
@@ -250,6 +251,7 @@ public class InstancesWindow extends DialogWrapper {
 
     private void updateInstances() {
       cancelFilteringTask();
+      final XExpression filteringExpression = myFilterConditionEditor.getExpression();
 
       myDebugProcess.getManagerThread().schedule(new DebuggerContextCommandImpl(myDebugProcess.getDebuggerContext()) {
         @Override
@@ -259,7 +261,7 @@ public class InstancesWindow extends DialogWrapper {
 
         @Override
         public void threadAction(@NotNull SuspendContextImpl suspendContext) {
-          myIsAndroidVM = AndroidUtil.isAndroidVM(myDebugProcess.getVirtualMachineProxy().getVirtualMachine());
+          myIsAndroidVM = DebuggerUtils.isAndroidVM(myDebugProcess.getVirtualMachineProxy().getVirtualMachine());
           final int limit = myIsAndroidVM
                             ? AndroidUtil.ANDROID_INSTANCES_LIMIT
                             : DEFAULT_INSTANCES_LIMIT;
@@ -275,7 +277,7 @@ public class InstancesWindow extends DialogWrapper {
 
           if (evaluationContext != null) {
             synchronized (myFilteringTaskLock) {
-              myFilteringTask = new MyFilteringWorker(instances, myFilterConditionEditor.getExpression(), evaluationContext);
+              myFilteringTask = new MyFilteringWorker(instances, filteringExpression, evaluationContext);
               myFilteringTask.execute();
             }
           }

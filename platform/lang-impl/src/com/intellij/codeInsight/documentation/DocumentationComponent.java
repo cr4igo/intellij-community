@@ -26,6 +26,7 @@ import com.intellij.openapi.actionSystem.impl.MenuItemPresentationFactory;
 import com.intellij.openapi.application.ApplicationBundle;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.editor.colors.ColorKey;
 import com.intellij.openapi.editor.colors.EditorColorsManager;
 import com.intellij.openapi.editor.colors.EditorColorsUtil;
@@ -37,9 +38,12 @@ import com.intellij.openapi.module.ModuleManager;
 import com.intellij.openapi.module.ModuleType;
 import com.intellij.openapi.module.ModuleTypeManager;
 import com.intellij.openapi.options.FontSize;
+import com.intellij.openapi.project.Project;
 import com.intellij.openapi.roots.*;
 import com.intellij.openapi.ui.popup.JBPopup;
 import com.intellij.openapi.ui.popup.JBPopupFactory;
+import com.intellij.openapi.ui.popup.util.PopupUtil;
+import com.intellij.openapi.util.DimensionService;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.IconLoader;
 import com.intellij.openapi.util.InvalidDataException;
@@ -56,12 +60,14 @@ import com.intellij.psi.SmartPsiElementPointer;
 import com.intellij.psi.util.PsiModificationTracker;
 import com.intellij.ui.*;
 import com.intellij.ui.awt.RelativePoint;
+import com.intellij.ui.components.JBLayeredPane;
 import com.intellij.ui.components.JBScrollPane;
 import com.intellij.ui.popup.AbstractPopup;
 import com.intellij.ui.popup.PopupPositionManager;
 import com.intellij.util.Url;
 import com.intellij.util.Urls;
 import com.intellij.util.ui.GraphicsUtil;
+import com.intellij.util.ui.JBDimension;
 import com.intellij.util.ui.JBUI;
 import com.intellij.util.ui.UIUtil;
 import com.intellij.util.ui.accessibility.ScreenReader;
@@ -100,9 +106,9 @@ public class DocumentationComponent extends JPanel implements Disposable, DataPr
   private static final Highlighter.HighlightPainter LINK_HIGHLIGHTER = new LinkHighlighter();
   @NonNls private static final String DOCUMENTATION_TOPIC_ID = "reference.toolWindows.Documentation";
 
-  private static final int PREFERRED_WIDTH_EM = 37;
-  private static final int PREFERRED_HEIGHT_MIN_EM = 7;
-  private static final int PREFERRED_HEIGHT_MAX_EM = 20;
+  private static final int PREFERRED_HEIGHT_MAX_EM = 10;
+  private static final JBDimension MAX_DEFAULT = new JBDimension(650, 500);
+  private static final JBDimension MIN_DEFAULT = new JBDimension(300, 59);
   private final ExternalDocAction myExternalDocAction;
 
   private DocumentationManager myManager;
@@ -147,7 +153,7 @@ public class DocumentationComponent extends JPanel implements Disposable, DataPr
     }
   };
   private Runnable myToolwindowCallback;
-
+  private final ActionButton myCorner;
 
   public AnAction[] getActions() {
     return myToolBar.getActions().stream().filter((action -> !(action instanceof Separator))).toArray(AnAction[]::new);
@@ -158,7 +164,7 @@ public class DocumentationComponent extends JPanel implements Disposable, DataPr
   }
 
   public void removeCornerMenu() {
-    myScrollPane.resetCorners();
+    myCorner.setVisible(false);
   }
 
   public void setToolwindowCallback(Runnable callback) {
@@ -223,33 +229,21 @@ public class DocumentationComponent extends JPanel implements Disposable, DataPr
     });
   }
 
+  public static DocumentationComponent createAndFetch(Project project, PsiElement element, Disposable disposable) {
+    DocumentationManager manager = DocumentationManager.getInstance(project);
+    DocumentationComponent component = new DocumentationComponent(manager);
+    Disposer.register(disposable, component);
+    manager.fetchDocInfo(element, component);
+    return component;
+  }
+
   public DocumentationComponent(final DocumentationManager manager) {
     myManager = manager;
     myIsEmpty = true;
     myIsShown = false;
 
     myEditorPane = new JEditorPane(UIUtil.HTML_MIME, "") {
-      @Override
-      public Dimension getPreferredScrollableViewportSize() {
-        int em = myEditorPane.getFont().getSize();
-        int prefWidth = PREFERRED_WIDTH_EM * em;
-        int prefHeightMin = PREFERRED_HEIGHT_MIN_EM * em;
-        int prefHeightMax = PREFERRED_HEIGHT_MAX_EM * em;
-
-        if (getWidth() == 0 || getHeight() == 0) {
-          setSize(prefWidth, prefHeightMax);
-        }
-
-        Insets ins = myEditorPane.getInsets();
-        View rootView = myEditorPane.getUI().getRootView(myEditorPane);
-        rootView.setSize(prefWidth, prefHeightMax);  // Necessary! Without this line, the size won't increase when the content does
-
-        int prefHeight = (int)rootView.getPreferredSpan(View.Y_AXIS) + ins.bottom + ins.top +
-                         myScrollPane.getHorizontalScrollBar().getMaximumSize().height;
-        prefHeight = Math.max(prefHeightMin, Math.min(prefHeightMax, prefHeight));
-        return new Dimension(prefWidth, prefHeight);
-      }
-
+      private Point initialClick;
       {
         enableEvents(AWTEvent.KEY_EVENT_MASK);
       }
@@ -264,6 +258,49 @@ public class DocumentationComponent extends JPanel implements Disposable, DataPr
           return;
         }
         super.processKeyEvent(e);
+      }
+
+      @Override
+      protected void processMouseEvent(MouseEvent e) {
+        if (e.getID() == MouseEvent.MOUSE_PRESSED && myHint != null) {
+          initialClick = null;
+          StyledDocument document = (StyledDocument)getDocument();
+          int x = e.getX();
+          int y = e.getY();
+          if (!hasTextAt(document, x, y) &&
+              !hasTextAt(document, x + 3, y) &&
+              !hasTextAt(document, x - 3, y) &&
+              !hasTextAt(document, x, y + 3) &&
+              !hasTextAt(document, x, y - 3)) {
+            initialClick = e.getPoint();
+          }
+        }
+        super.processMouseEvent(e);
+      }
+
+      private boolean hasTextAt(StyledDocument document, int x, int y) {
+        Element element = document.getCharacterElement(viewToModel(new Point(x, y)));
+        try {
+          String text = document.getText(element.getStartOffset(), element.getEndOffset() - element.getStartOffset());
+          if (StringUtil.isEmpty(text.trim())) {
+            return false;
+          }
+        }
+        catch (BadLocationException ignored) {
+          return false;
+        }
+        return true;
+      }
+
+      @Override
+      protected void processMouseMotionEvent(MouseEvent e) {
+        if (e.getID() == MouseEvent.MOUSE_DRAGGED && myHint != null && initialClick != null) {
+          Point location = myHint.getLocationOnScreen();
+          myHint.setLocation(new Point(location.x + e.getX() - initialClick.x, location.y + e.getY() - initialClick.y));
+          e.consume();
+          return;
+        }
+        super.processMouseMotionEvent(e);
       }
 
       @Override
@@ -389,7 +426,7 @@ public class DocumentationComponent extends JPanel implements Disposable, DataPr
     setLayout(new BorderLayout());
 
     mySettingsPanel = createSettingsPanel();
-    add(myScrollPane, BorderLayout.CENTER);
+    //add(myScrollPane, BorderLayout.CENTER);
     setOpaque(true);
     myScrollPane.setBorder(JBUI.Borders.empty());
 
@@ -441,6 +478,60 @@ public class DocumentationComponent extends JPanel implements Disposable, DataPr
 
     myToolBar = ActionManager.getInstance().createActionToolbar(ActionPlaces.JAVADOC_TOOLBAR, actions, true);
 
+    JLayeredPane layeredPane = new JBLayeredPane() {
+      @Override
+      public void doLayout() {
+        final Rectangle r = getBounds();
+        for (Component component : getComponents()) {
+          if (component instanceof JScrollPane) {
+            component.setBounds(0, 0, r.width, r.height);
+          }
+          else {
+            int insets = 3;
+            Dimension d = component.getPreferredSize();
+            component.setBounds(r.width - d.width - insets, r.height - d.height - insets, d.width, d.height);
+          }
+        }
+      }
+
+      @Override
+      public Dimension getPreferredSize() {
+        Dimension size = myScrollPane.getPreferredSize();
+        if (myHint == null && myManager.myToolWindow == null) {
+          int em = myEditorPane.getFont().getSize();
+          int prefHeightMax = PREFERRED_HEIGHT_MAX_EM * em;
+          return new Dimension(size.width, Math.min(prefHeightMax,
+                                                    size.height + (needsToolbar() ? myControlPanel.getPreferredSize().height : 0)));
+        }
+        return size;
+      }
+    };
+    layeredPane.add(myScrollPane);
+    layeredPane.setLayer(myScrollPane, 0);
+
+    final DefaultActionGroup gearActions = new MyGearActionGroup();
+    gearActions.add(new ShowAsToolwindowAction());
+    gearActions.add(new MyShowSettingsAction());
+    gearActions.add(new ShowToolbarAction());
+    gearActions.add(new RestoreDefaultSizeAction());
+    gearActions.addSeparator();
+    gearActions.addAll(actions);
+    Presentation presentation = new Presentation();
+    presentation.setIcon(AllIcons.General.GearPlain);
+    myCorner = new ActionButton(gearActions, presentation, ActionPlaces.UNKNOWN, new Dimension(22, 22)) {
+      @Override
+      public void paintComponent(Graphics g) {
+        g.setColor(myEditorPane.getBackground());
+        g.fillRect(0, 0, getSize().width, getSize().height);
+        paintButtonLook(g);
+      }
+    };
+    myCorner.setOpaque(true);
+    myCorner.setNoIconsInPopup(true);
+    layeredPane.add(myCorner);
+    layeredPane.setLayer(myCorner, JLayeredPane.POPUP_LAYER);
+    add(layeredPane, BorderLayout.CENTER);
+
     myControlPanel = new JPanel(new BorderLayout(5, 5));
     myControlPanel.setBorder(IdeBorderFactory.createBorder(SideBorder.BOTTOM));
 
@@ -483,6 +574,8 @@ public class DocumentationComponent extends JPanel implements Disposable, DataPr
     editorKit.getStyleSheet().addRule("p { padding: 1px 0 2px 0; }");
     editorKit.getStyleSheet().addRule("ul { padding: 5px 9px 0 7px; }");
     editorKit.getStyleSheet().addRule("li { padding: 1px 0 2px 0; }");
+    editorKit.getStyleSheet().addRule(".grayed { color: #909090; display: inline;}");
+    editorKit.getStyleSheet().addRule(".centered { text-align: center}");
 
     // sections table
     editorKit.getStyleSheet().addRule(".sections { padding: 0 9px 0 7px; border-spacing: 0; }");
@@ -627,7 +720,6 @@ public class DocumentationComponent extends JPanel implements Disposable, DataPr
       myBackStack.push(saveContext());
       myForwardStack.clear();
     }
-    updateControlState();
     setData(element, text, clearHistory, null);
     if (clean) {
       myIsEmpty = false;
@@ -668,7 +760,6 @@ public class DocumentationComponent extends JPanel implements Disposable, DataPr
     }
 
     myIsEmpty = false;
-    updateControlState();
     setDataInternal(element, text, new Rectangle(0, 0), ref);
 
     if (clearHistory) clearHistory();
@@ -676,6 +767,7 @@ public class DocumentationComponent extends JPanel implements Disposable, DataPr
 
   private void setDataInternal(SmartPsiElementPointer element, String text, final Rectangle viewRect, final String ref) {
     if (myManager == null) return;
+    updateControlState();
 
     setElement(element);
     
@@ -697,64 +789,139 @@ public class DocumentationComponent extends JPanel implements Disposable, DataPr
         myEditorPane.setCaretPosition(0);
       }});
   }
-
   private void showHint() {
-    LookupEx lookup = LookupManager.getActiveLookup(myManager.getEditor());
-    int maxWidth = JBUI.scale(lookup != null ? 435 : 650);
-    boolean lookupActive = lookup != null && lookup.getCurrentItem() != null && lookup.getComponent().isShowing();
-    if (myHint != null && myHint.getDimensionServiceKey() == null) {
-      Dimension preferredSize = myEditorPane.getPreferredSize();
-      int width = definitionPreferredWidth();
-      width = width < 0 ? preferredSize.width : width;
-      myResizing = true;
-      int height = preferredSize.height + (needsToolbar() ? myControlPanel.getPreferredSize().height : 0);
-      Dimension hintSize = new Dimension(Math.min(maxWidth, Math.max(JBUI.scale(300), width)),
-                                         Math.min(JBUI.scale(500), Math.max(JBUI.scale(59), height)));
-      if (lookupActive && myHint.getLocationOnScreen().x < lookup.getComponent().getLocationOnScreen().x) {
-        myHint.setLocation(new RelativePoint(lookup.getComponent(), new Point(-hintSize.width - 5, 0)));
-      }
-      myHint.setSize(hintSize);
-    }
-
-    if (!myIsShown && myHint != null && !ApplicationManager.getApplication().isUnitTestMode()) {
-      myResizing = true;
-      Component focusOwner = IdeFocusManager.getInstance(myManager.myProject).getFocusOwner();
-      DataContext dataContext = DataManager.getInstance().getDataContext(focusOwner);
-      if (lookupActive) {
-        Component lookupComponent = lookup.getComponent();
-        Point lookupPosition = lookupComponent.getLocationOnScreen();
-        Rectangle screenRectangle = ScreenUtil.getScreenRectangle(lookupComponent);
-        int lookupWidthAndGap = lookupComponent.getWidth() + 5;
-        int x = lookupPosition.x + lookupWidthAndGap;
-        Dimension hintSize = myHint.getSize();
-        RelativePoint point;
-        if (x + Math.max(hintSize.width, maxWidth) > screenRectangle.width) {
-          point = new RelativePoint(lookupComponent, new Point(-hintSize.width - 5, 0));
-        } else {
-          point = new RelativePoint(lookupComponent, new Point(lookupWidthAndGap, 0));
-        }
-        myHint.show(point);
-        lookup.addLookupListener(new LookupAdapter() {
-          @Override
-          public void lookupCanceled(LookupEvent event) {
-            final AbstractPopup hint = myHint;
-            if (hint != null && hint.canClose() && hint.isVisible()) {
-              hint.cancel();
-            }
-          }
-        });
-      } else {
-        PopupPositionManager.positionPopupInBestPosition(myHint, myManager.getEditor(), dataContext);
-      }
-      myIsShown = true;
+    Editor editor = myManager.getEditor();
+    Component popupAnchor = getPopupAnchor(editor);
+    int maxWidth = popupAnchor != null ? JBUI.scale(435) : MAX_DEFAULT.width;
+    if (myHint != null) {
+      Dimension hintSize;
       if (myHint.getDimensionServiceKey() == null) {
-        SwingUtilities.invokeLater(() -> registerSizeTracker());
+        Dimension preferredSize = myEditorPane.getPreferredSize();
+        int width = definitionPreferredWidth();
+        width = width < 0 ? preferredSize.width : width;
+        width = Math.min(maxWidth, Math.max(JBUI.scale(300), width));
+        myEditorPane.setBounds(0, 0, width, MAX_DEFAULT.height);
+        myEditorPane.setText(myEditorPane.getText());
+        preferredSize = myEditorPane.getPreferredSize();
+
+        int height = preferredSize.height + (needsToolbar() ? myControlPanel.getPreferredSize().height : 0);
+        height = Math.min(MAX_DEFAULT.height, Math.max(MIN_DEFAULT.height, height));
+        hintSize = new Dimension(width, height);
+      } else {
+        hintSize = DimensionService.getInstance().getSize(DocumentationManager.NEW_JAVADOC_LOCATION_AND_SIZE, myManager.myProject);
+        hintSize = hintSize != null ? hintSize : MIN_DEFAULT;
+      }
+
+      Point location = myHint.getLocationOnScreen();
+      if (popupAnchor != null && location.x < popupAnchor.getLocationOnScreen().x) {
+        // pin upper right corner (instead of default upper left)
+        location = new RelativePoint(popupAnchor, new Point(-hintSize.width - 5, 0)).getScreenPoint();
+        myHint.setLocation(location);
+      } else if (editor != null && editor.getComponent().isShowing()) {
+        // pin lower bound (instead of default upper)
+        Point preferredLocation = JBPopupFactory.getInstance().guessBestPopupLocation(editor).getScreenPoint();
+        preferredLocation.y -= editor.getLineHeight();
+        if (location.y < preferredLocation.y) {
+          location = new Point(location.x, preferredLocation.y - hintSize.height);
+          myHint.setLocation(location);
+        }
+      }
+      if (myIsShown) {
+        Rectangle screen = ScreenUtil.getScreenRectangle(myEditorPane);
+        int xLeftOverdraft = screen.x - location.x;
+        if (xLeftOverdraft > 0) {
+          location.x += xLeftOverdraft;
+          hintSize.width -= xLeftOverdraft;
+        }
+        int xRightOverdraft = location.x + hintSize.width - screen.x - screen.width;
+        if (xRightOverdraft > 0) {
+          myHint.setLocation(new Point(location.x - xRightOverdraft, location.y));
+        }
+
+        int yTopOverdraft = screen.y - location.y;
+        if (yTopOverdraft > 0) {
+          location.y += yTopOverdraft;
+          hintSize.height -= yTopOverdraft;
+        }
+        int yBottomOverdraft = location.y + hintSize.height - screen.y - screen.height;
+        if (yBottomOverdraft > 0) {
+          hintSize.height -= yBottomOverdraft;
+        }
+      }
+      myResizing = true;
+      myHint.setSize(hintSize);
+
+      if (!myIsShown && !ApplicationManager.getApplication().isUnitTestMode()) {
+        myResizing = true;
+        Component focusOwner = IdeFocusManager.getInstance(myManager.myProject).getFocusOwner();
+        DataContext dataContext = DataManager.getInstance().getDataContext(focusOwner);
+        if (popupAnchor != null) {
+          Point lookupPosition = popupAnchor.getLocationOnScreen();
+          Rectangle screenRectangle = ScreenUtil.getScreenRectangle(popupAnchor);
+          int lookupWidthAndGap = popupAnchor.getWidth() + 5;
+          int x = lookupPosition.x + lookupWidthAndGap;
+          RelativePoint point;
+          // if documentation doesn't fit into screen, put it on the left hand side
+          if (x + Math.max(hintSize.width, maxWidth) > screenRectangle.width) {
+            point = new RelativePoint(popupAnchor, new Point(-hintSize.width - 5, 0));
+          } else {
+            point = new RelativePoint(popupAnchor, new Point(lookupWidthAndGap, 0));
+          }
+          myHint.show(point);
+          LookupEx lookup = LookupManager.getActiveLookup(editor);
+          if (lookup != null) {
+            lookup.addLookupListener(new LookupAdapter() {
+              @Override
+              public void lookupCanceled(LookupEvent event) {
+                final AbstractPopup hint = myHint;
+                if (hint != null && hint.canClose() && hint.isVisible()) {
+                  hint.cancel();
+                }
+              }
+            });
+          }
+        } else if (editor != null && editor.getComponent().isShowing()) {
+          // let's try to fit at least of half of maximum size on the bottom
+          Point preferredLocation = JBPopupFactory.getInstance().guessBestPopupLocation(editor).getScreenPoint();
+          Rectangle preferred = new Rectangle(preferredLocation.x, preferredLocation.y, MAX_DEFAULT.width, MAX_DEFAULT.height / 2);
+          Rectangle adjusted = (Rectangle)preferred.clone();
+          ScreenUtil.fitToScreen(adjusted);
+          // if we fail, show documentation on top
+          if (preferred.y != adjusted.y) {
+            preferredLocation.y -= editor.getLineHeight() + hintSize.height;
+          }
+
+          myHint.show(new RelativePoint(preferredLocation));
+        }
+        else {
+          PopupPositionManager.positionPopupInBestPosition(myHint, editor, dataContext);
+        }
+        myIsShown = true;
+        if (myHint.getDimensionServiceKey() == null) {
+          SwingUtilities.invokeLater(this::registerSizeTracker);
+        }
       }
     }
   }
 
+  private static Component getPopupAnchor(Editor editor) {
+    LookupEx lookup = LookupManager.getActiveLookup(editor);
+
+    if (lookup != null && lookup.getCurrentItem() != null && lookup.getComponent().isShowing()) {
+      return lookup.getComponent();
+    }
+    final Component focusOwner = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
+    JBPopup popup = PopupUtil.getPopupContainerFor(focusOwner);
+    if (popup != null) {
+      return popup.getContent();
+    }
+    return null;
+  }
+
   private void registerSizeTracker() {
-    final Window window = myHint.getPopupWindow();
+    final AbstractPopup hint = myHint;
+    if (hint == null) return;
+    final Window window = hint.getPopupWindow();
     final ComponentAdapter listener = new ComponentAdapter() {
       @Override
       public void componentResized(ComponentEvent e) {
@@ -762,11 +929,11 @@ public class DocumentationComponent extends JPanel implements Disposable, DataPr
           myResizing = false;
           return;
         }
-        myHint.setDimensionServiceKey(DocumentationManager.NEW_JAVADOC_LOCATION_AND_SIZE);
+        hint.setDimensionServiceKey(DocumentationManager.NEW_JAVADOC_LOCATION_AND_SIZE);
       }
     };
     window.addComponentListener(listener);
-    Disposer.register(this, () -> myHint.getPopupWindow().removeComponentListener(listener));
+    Disposer.register(this, () -> hint.getPopupWindow().removeComponentListener(listener));
   }
 
   private int definitionPreferredWidth() {
@@ -957,7 +1124,6 @@ public class DocumentationComponent extends JPanel implements Disposable, DataPr
     Context context = myBackStack.pop();
     myForwardStack.push(saveContext());
     restoreContext(context);
-    updateControlState();
   }
 
   private void goForward() {
@@ -965,7 +1131,6 @@ public class DocumentationComponent extends JPanel implements Disposable, DataPr
     Context context = myForwardStack.pop();
     myBackStack.push(saveContext());
     restoreContext(context);
-    updateControlState();
   }
 
   private Context saveContext() {
@@ -987,31 +1152,13 @@ public class DocumentationComponent extends JPanel implements Disposable, DataPr
     } else {
       myControlPanelVisible = false;
       remove(myControlPanel);
-      if (myHint == null) return;
-      final DefaultActionGroup gearActions = new MyGearActionGroup();
-      gearActions.add(new ShowAsToolwindowAction());
-      gearActions.add(new MyShowSettingsAction());
-      gearActions.add(new ShowToolbarAction());
-      gearActions.addSeparator();
-      gearActions.addAll(getActions());
-      Presentation presentation = new Presentation();
-      presentation.setIcon(AllIcons.General.GearPlain);
-      ActionButton corner = new ActionButton(gearActions, presentation, ActionPlaces.UNKNOWN, new Dimension(22, 22)) {
-        @Override
-        public void paintComponent(Graphics g) {
-          g.setColor(getBackground());
-          g.fillRect(0, 0, getSize().width, getSize().height);
-          paintButtonLook(g);
-        }
-      };
-      corner.setOpaque(true);
-      corner.setNoIconsInPopup(true);
-      myScrollPane.setCorner(ScrollPaneConstants.LOWER_RIGHT_CORNER, corner);
+      if (myManager.myToolWindow != null) return;
+      myCorner.setVisible(true);
     }
   }
 
   private boolean needsToolbar() {
-    return myHint != null && Registry.is("documentation.show.toolbar");
+    return myManager.myToolWindow == null && Registry.is("documentation.show.toolbar");
   }
 
   private static class MyGearActionGroup extends DefaultActionGroup implements HintManagerImpl.ActionToIgnore {
@@ -1312,7 +1459,8 @@ public class DocumentationComponent extends JPanel implements Disposable, DataPr
   private class MyShowSettingsButton extends ActionButton {
 
     public MyShowSettingsButton() {
-      this(new MyGearActionGroup(new ShowAsToolwindowAction(), new MyShowSettingsAction(), new ShowToolbarAction()), new Presentation(), ActionPlaces.JAVADOC_INPLACE_SETTINGS, ActionToolbar.DEFAULT_MINIMUM_BUTTON_SIZE);
+      this(new MyGearActionGroup(new ShowAsToolwindowAction(), new MyShowSettingsAction(), new ShowToolbarAction(), new RestoreDefaultSizeAction()),
+           new Presentation(), ActionPlaces.JAVADOC_INPLACE_SETTINGS, ActionToolbar.DEFAULT_MINIMUM_BUTTON_SIZE);
     }
 
     private MyShowSettingsButton(AnAction action, Presentation presentation, String place, @NotNull Dimension minimumSize) {
@@ -1437,38 +1585,23 @@ public class DocumentationComponent extends JPanel implements Disposable, DataPr
 
   private class MyScrollPane extends JBScrollPane {
     public MyScrollPane() {
-      super(myEditorPane, VERTICAL_SCROLLBAR_AS_NEEDED, HORIZONTAL_SCROLLBAR_ALWAYS);
+      super(myEditorPane, VERTICAL_SCROLLBAR_AS_NEEDED, HORIZONTAL_SCROLLBAR_AS_NEEDED);
       setLayout(new Layout() {
         @Override
         public void layoutContainer(Container parent) {
           super.layoutContainer(parent);
-          if (!(lowerRight instanceof ActionButton)) return;
+          if (!myCorner.isVisible()) return;
           if (vsb != null) {
             Rectangle bounds = vsb.getBounds();
-            vsb.setBounds(bounds.x, bounds.y, bounds.width, bounds.height - lowerRight.getPreferredSize().height - 3);
+            vsb.setBounds(bounds.x, bounds.y, bounds.width, bounds.height - myCorner.getPreferredSize().height - 3);
           }
           if (hsb != null) {
             Rectangle bounds = hsb.getBounds();
             int vsbOffset = vsb != null ? vsb.getBounds().width : 0;
-            hsb.setBounds(bounds.x, bounds.y, bounds.width - lowerRight.getPreferredSize().width - 3 + vsbOffset, bounds.height);
+            hsb.setBounds(bounds.x, bounds.y, bounds.width - myCorner.getPreferredSize().width - 3 + vsbOffset, bounds.height);
           }
-          Rectangle bounds = lowerRight.getBounds();
-          lowerRight.setBounds(bounds.x - lowerRight.getPreferredSize().width - 3,
-                               bounds.y - lowerRight.getPreferredSize().height - 3,
-                               lowerRight.getPreferredSize().width,
-                               lowerRight.getPreferredSize().height);
         }
       });
-    }
-
-    public void resetCorners() {
-      setupCorners();
-    }
-
-    @Override
-    protected void setupCorners() {
-      super.setupCorners();
-      setBorder(JBUI.Borders.empty());
     }
 
     @Override
@@ -1513,8 +1646,31 @@ public class DocumentationComponent extends JPanel implements Disposable, DataPr
     }
 
     @Override
+    public void update(AnActionEvent e) {
+      e.getPresentation().setEnabledAndVisible(myToolwindowCallback != null);
+    }
+
+    @Override
     public void actionPerformed(AnActionEvent e) {
       myToolwindowCallback.run();
+    }
+  }
+
+  private class RestoreDefaultSizeAction extends AnAction implements HintManagerImpl.ActionToIgnore {
+    public RestoreDefaultSizeAction() {
+      super("Restore Size");
+    }
+
+    @Override
+    public void update(AnActionEvent e) {
+      e.getPresentation().setEnabledAndVisible(myHint != null && myHint.getDimensionServiceKey() != null);
+    }
+
+    @Override
+    public void actionPerformed(AnActionEvent e) {
+      DimensionService.getInstance().setSize(DocumentationManager.NEW_JAVADOC_LOCATION_AND_SIZE, null, myManager.myProject);
+      myHint.setDimensionServiceKey(null);
+      showHint();
     }
   }
 }

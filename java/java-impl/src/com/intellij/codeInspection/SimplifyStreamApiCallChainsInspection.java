@@ -1,4 +1,4 @@
-// Copyright 2000-2017 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
+// Copyright 2000-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
 package com.intellij.codeInspection;
 
 import com.intellij.codeInsight.ExpressionUtil;
@@ -34,7 +34,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.text.MessageFormat;
 import java.util.*;
-import java.util.stream.Stream;
 
 import static com.intellij.util.ObjectUtils.tryCast;
 import static com.siyeh.ig.callMatcher.CallMatcher.*;
@@ -706,7 +705,7 @@ public class SimplifyStreamApiCallChainsInspection extends AbstractBaseJavaLocal
       .register(collectorMatcher("toSet", 0), CommonClassNames.JAVA_UTIL_HASH_SET)
       .register(collectorMatcher("toCollection", 1), SimplifyCollectionCreationFix::getCollectionClass);
 
-    private String myReplacement;
+    private final String myReplacement;
 
     public SimplifyCollectionCreationFix(String replacement) {
       myReplacement = replacement;
@@ -755,25 +754,7 @@ public class SimplifyStreamApiCallChainsInspection extends AbstractBaseJavaLocal
       PsiMethod ctor = tryCast(methodRef.resolve(), PsiMethod.class);
       if (ctor == null || !ctor.getParameterList().isEmpty()) return null;
       PsiClass aClass = ctor.getContainingClass();
-      if (aClass == null) return null;
-      String name = aClass.getQualifiedName();
-      if (name != null && name.startsWith("java.util.") &&
-          Stream.of(aClass.getConstructors()).anyMatch(SimplifyCollectionCreationFix::isCollectionConstructor)) {
-        return name;
-      }
-      return null;
-    }
-
-    @Contract("null -> false")
-    private static boolean isCollectionConstructor(PsiMethod ctor) {
-      if (ctor == null || !ctor.getModifierList().hasExplicitModifier(PsiModifier.PUBLIC)) return false;
-      PsiParameterList list = ctor.getParameterList();
-      if (list.getParametersCount() != 1) return false;
-      PsiTypeElement typeElement = list.getParameters()[0].getTypeElement();
-      if (typeElement == null) return false;
-      PsiType type = typeElement.getType();
-      PsiClass aClass = PsiUtil.resolveClassInClassTypeOnly(type);
-      return aClass != null && CommonClassNames.JAVA_UTIL_COLLECTION.equals(aClass.getQualifiedName());
+      return ConstructionUtils.isCollectionWithCopyConstructor(aClass) ? aClass.getQualifiedName() : null;
     }
   }
 
@@ -833,7 +814,7 @@ public class SimplifyStreamApiCallChainsInspection extends AbstractBaseJavaLocal
     private static final CallMatcher OPTIONAL_TERMINAL =
       anyOf(instanceCall(CommonClassNames.JAVA_UTIL_STREAM_BASE_STREAM, "findFirst", "findAny").parameterCount(0),
             instanceCall(CommonClassNames.JAVA_UTIL_STREAM_BASE_STREAM, "min", "max", "reduce").parameterCount(1));
-    private ReplacementMode myMode;
+    private final ReplacementMode myMode;
 
     enum ReplacementMode {
       OPTIONAL, FUNCTION, NEGATED_FUNCTION
@@ -1232,7 +1213,7 @@ public class SimplifyStreamApiCallChainsInspection extends AbstractBaseJavaLocal
   }
 
   private static class RemoveBooleanIdentityFix implements CallChainSimplification {
-    private boolean myInvert;
+    private final boolean myInvert;
 
     public RemoveBooleanIdentityFix(boolean invert) {
       myInvert = invert;
@@ -1531,7 +1512,7 @@ public class SimplifyStreamApiCallChainsInspection extends AbstractBaseJavaLocal
         PsiExpression[] nCopiesArgs = maybeNCopies.getArgumentList().getExpressions();
         PsiExpression count = nCopiesArgs[0];
         PsiExpression obj = nCopiesArgs[1];
-        if(!ExpressionUtils.isSimpleExpression(obj)) return null;
+        if(!ExpressionUtils.isSafelyRecomputableExpression(obj)) return null;
 
         PsiMethodCallExpression maybeMap = ExpressionUtils.getCallForQualifier(call);
         if(!STREAM_MAP_TO_ALL.test(maybeMap)) return null;

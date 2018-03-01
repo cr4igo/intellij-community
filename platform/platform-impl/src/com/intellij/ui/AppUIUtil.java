@@ -171,7 +171,7 @@ public class AppUIUtil {
       .replace(' ', '-')
       .replace("intellij-idea", "idea").replace("android-studio", "studio")  // backward compatibility
       .replace("-community-edition", "-ce").replace("-ultimate-edition", "").replace("-professional-edition", "");
-    String wmClass = VENDOR_PREFIX + name;
+    String wmClass = name.startsWith(VENDOR_PREFIX) ? name : VENDOR_PREFIX + name;
     if (DEBUG_MODE) wmClass += "-debug";
     return wmClass;
   }
@@ -400,14 +400,14 @@ public class AppUIUtil {
         final JPanel body = new JPanel(new GridBagLayout());
 
         //noinspection UseDPIAwareInsets
-        body.add(new JLabel("Please review your options regarding the sharing your data with JetBrains:"),
+        body.add(new JLabel("Please review your options regarding sharing your data with " + ApplicationInfoImpl.getShadowInstance().getShortCompanyName() + ":"),
                  new GridBagConstraints(
                    0, GridBagConstraints.RELATIVE, 1, 1, 1.0, 0.0, GridBagConstraints.NORTH, GridBagConstraints.BOTH,
                    new Insets(JBUI.scale(10), getLeftTextMargin(new JCheckBox()), JBUI.scale(10), 0), 0, 0));
         for (Iterator<Consent> it = consents.iterator(); it.hasNext(); ) {
           final Consent consent = it.next();
           final JComponent comp = createConsentElement(consent);
-          boolean lastConsent = !it.hasNext();
+          boolean lastConsent = !it.hasNext();                                              
           if (lastConsent) {
             body.setBackground(comp.getBackground());
           } else {

@@ -1,6 +1,7 @@
 // Copyright 2000-2017 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
 package com.siyeh.ig.redundancy;
 
+import com.intellij.codeInsight.BlockUtils;
 import com.intellij.codeInsight.daemon.impl.quickfix.DeleteElementFix;
 import com.intellij.codeInspection.*;
 import com.intellij.openapi.project.Project;
@@ -97,35 +98,44 @@ public class RedundantStringOperationInspection extends AbstractBaseJavaLocalIns
 
       private void processSubstring(PsiMethodCallExpression call) {
         PsiExpression[] args = call.getArgumentList().getExpressions();
-        if (isRedundantSubstring(call, args)) {
-          registerProblem(call, "inspection.redundant.string.call.message");
-        }
-        else if (args.length == 2) {
-          PsiElement parent = PsiUtil.skipParenthesizedExprUp(call.getParent());
-          if (parent instanceof PsiExpressionList && ((PsiExpressionList)parent).getExpressionCount() == 1) {
-            PsiMethodCallExpression parentCall = tryCast(parent.getParent(), PsiMethodCallExpression.class);
-            if (STRING_BUILDER_APPEND.test(parentCall)) {
-              PsiElement nameElement = Objects.requireNonNull(call.getMethodExpression().getReferenceNameElement());
-              holder.registerProblem(nameElement, InspectionGadgetsBundle.message("inspection.redundant.string.call.message"),
-                                     ProblemHighlightType.LIKE_UNUSED_SYMBOL,
-                                     new RemoveRedundantStringCallFix(nameElement.getText(), FixType.REPLACE_WITH_ARGUMENTS));
+        PsiExpression stringExpression = call.getMethodExpression().getQualifierExpression();
+        switch (args.length) {
+          case 1:
+            if(ExpressionUtils.isZero(args[0])) {
+              registerProblem(call, "inspection.redundant.string.call.message");
             }
-          }
+            break;
+          case 2:
+            if (isLengthOf(args[1], stringExpression)) {
+              if (ExpressionUtils.isZero(args[0])) {
+                registerProblem(call, "inspection.redundant.string.call.message");
+              } else {
+                DeleteElementFix fix =
+                  new DeleteElementFix(args[1], InspectionGadgetsBundle.message("inspection.redundant.string.remove.argument.fix.name"));
+                holder.registerProblem(args[1], InspectionGadgetsBundle.message("inspection.redundant.string.call.message"),
+                                       ProblemHighlightType.LIKE_UNUSED_SYMBOL, fix);
+              }
+            } else {
+              PsiElement parent = PsiUtil.skipParenthesizedExprUp(call.getParent());
+              if (parent instanceof PsiExpressionList && ((PsiExpressionList)parent).getExpressionCount() == 1) {
+                PsiMethodCallExpression parentCall = tryCast(parent.getParent(), PsiMethodCallExpression.class);
+                if (STRING_BUILDER_APPEND.test(parentCall)) {
+                  PsiElement nameElement = Objects.requireNonNull(call.getMethodExpression().getReferenceNameElement());
+                  holder.registerProblem(nameElement, InspectionGadgetsBundle.message("inspection.redundant.string.call.message"),
+                                         ProblemHighlightType.LIKE_UNUSED_SYMBOL,
+                                         new RemoveRedundantStringCallFix(nameElement.getText(), FixType.REPLACE_WITH_ARGUMENTS));
+                }
+              }
+            }
+            break;
         }
       }
 
-      private boolean isRedundantSubstring(PsiMethodCallExpression call, PsiExpression[] args) {
-        if (!ExpressionUtils.isZero(args[0])) return false;
-        if (args.length == 2) {
-          PsiMethodCallExpression argCall = tryCast(PsiUtil.skipParenthesizedExprDown(args[1]), PsiMethodCallExpression.class);
-          if (!STRING_LENGTH.test(argCall) ||
-              !EquivalenceChecker.getCanonicalPsiEquivalence()
-                                 .expressionsAreEquivalent(call.getMethodExpression().getQualifierExpression(),
-                                                           argCall.getMethodExpression().getQualifierExpression())) {
-            return false;
-          }
-        }
-        return true;
+      private boolean isLengthOf(PsiExpression stringLengthCandidate, PsiExpression stringExpression) {
+        PsiMethodCallExpression argCall = tryCast(PsiUtil.skipParenthesizedExprDown(stringLengthCandidate), PsiMethodCallExpression.class);
+        return STRING_LENGTH.test(argCall) &&
+               EquivalenceChecker.getCanonicalPsiEquivalence()
+                                 .expressionsAreEquivalent(stringExpression, argCall.getMethodExpression().getQualifierExpression());
       }
 
       private void registerProblem(PsiMethodCallExpression call, @NotNull @PropertyKey(resourceBundle = BUNDLE) String key) {

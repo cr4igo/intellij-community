@@ -1,6 +1,7 @@
 // Copyright 2000-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
 package com.intellij.java.codeInsight.daemon.impl;
 
+import com.intellij.application.UtilKt;
 import com.intellij.application.options.editor.CodeFoldingConfigurable;
 import com.intellij.codeHighlighting.*;
 import com.intellij.codeInsight.EditorInfo;
@@ -105,6 +106,7 @@ import com.intellij.util.io.storage.HeavyProcessLatch;
 import com.intellij.util.ui.UIUtil;
 import com.intellij.xml.util.CheckDtdReferencesInspection;
 import gnu.trove.THashSet;
+import kotlin.Unit;
 import org.intellij.lang.annotations.Language;
 import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NonNls;
@@ -172,7 +174,6 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
 
   @Override
   protected void runStartupActivities() {
-
   }
 
   private static void typeInAlienEditor(Editor alienEditor, char c) {
@@ -181,7 +182,6 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
 
     action.actionPerformed(alienEditor, c, dataContext);
   }
-
 
   public void testHighlightersUpdate() throws Exception {
     configureByFile(BASE_PATH + "HighlightersUpdate.java");
@@ -1220,8 +1220,7 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
   }
 
 
-  // disabled for now
-  public void _testSOEInEndlessAppendChainPerformance() {
+  public void testSOEInEndlessAppendChainPerformance() {
     StringBuilder text = new StringBuilder("class S { String ffffff =  new StringBuilder()\n");
     for (int i=0; i<2000; i++) {
       text.append(".append(").append(i).append(")\n");
@@ -1229,21 +1228,34 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
     text.append(".toString();<caret>}");
     configureByText(StdFileTypes.JAVA, text.toString());
 
-    PlatformTestUtil.startPerformanceTest("tree visitors", 30000, () -> {
+    PlatformTestUtil.startPerformanceTest("highlighting deep call chain", 60_000, () -> {
       List<HighlightInfo> infos = highlightErrors();
       assertEmpty(infos);
-      type("kjhgas");
-      List<HighlightInfo> errors = highlightErrors();
-      assertFalse(errors.isEmpty());
+      type("k");
+      assertNotEmpty(highlightErrors());
       backspace();
+    }).usesAllCPUCores().assertTiming();
+  }
+
+  public void testPerformanceOfHighlightingLongCallChainWithHierarchyAndGenerics() {
+    String text = "class Foo { native Foo foo(); }\n" +
+                  "class Bar<T extends Foo> extends Foo {\n" +
+                  "  native Bar<T> foo();" +
+                  "}\n" +
+                  "class Goo extends Bar<Goo> {}\n" +
+                  "class S { void x(Goo g) { g\n" +
+                  StringUtil.repeat(".foo()\n", 2000) +
+                  ".toString(); } }";
+    configureByText(StdFileTypes.JAVA, text);
+
+    PlatformTestUtil.startPerformanceTest("highlighting deep call chain", 90_000, () -> {
+      assertEmpty(highlightErrors());
+
+      type("k");
+      assertNotEmpty(highlightErrors());
+
       backspace();
-      backspace();
-      backspace();
-      backspace();
-      backspace();
-      infos = highlightErrors();
-      assertEmpty(infos);
-    }).useLegacyScaling().assertTiming();
+    }).usesAllCPUCores().assertTiming();
   }
 
 
@@ -1304,19 +1316,18 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
     GeneralSettings settings = GeneralSettings.getInstance();
     ApplicationEx application = ApplicationManagerEx.getApplicationEx();
     boolean frameSave = settings.isSaveOnFrameDeactivation();
-    boolean appSave = application.isDoNotSave();
-
     settings.setSaveOnFrameDeactivation(true);
-    application.doNotSave(false);
-    try {
-      StoreUtil.saveDocumentsAndProjectsAndApp(false);
+    UtilKt.runInAllowSaveMode(() -> {
+      try {
+        StoreUtil.saveDocumentsAndProjectsAndApp(false);
 
-      checkDaemonReaction(false, () -> StoreUtil.saveDocumentsAndProjectsAndApp(false));
-    }
-    finally {
-      application.doNotSave(appSave);
-      settings.setSaveOnFrameDeactivation(frameSave);
-    }
+        checkDaemonReaction(false, () -> StoreUtil.saveDocumentsAndProjectsAndApp(false));
+      }
+      finally {
+        settings.setSaveOnFrameDeactivation(frameSave);
+      }
+      return Unit.INSTANCE;
+    });
   }
 
   public void testApplyLocalQuickFix() {
@@ -1850,9 +1861,9 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
     model.addMarkupModelListener(getTestRootDisposable(), new MarkupModelListener.Adapter() {
       @Override
       public void beforeRemoved(@NotNull RangeHighlighterEx highlighter) {
-        Object tt = highlighter.getErrorStripeTooltip();
-        if (!(tt instanceof HighlightInfo)) return;
-        String description = ((HighlightInfo)tt).getDescription();
+        HighlightInfo info = HighlightInfo.fromRangeHighlighter(highlighter);
+        if (info == null) return;
+        String description = info.getDescription();
         if (errorDescription.equals(description)) {
           errorRemoved[0] = true;
 
@@ -2172,11 +2183,9 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
   public void testModificationInWorkspaceXmlDoesNotCauseRehighlight() {
     configureByText(JavaFileType.INSTANCE, "class X { <caret> }");
     ApplicationEx application = ApplicationManagerEx.getApplicationEx();
-    boolean appSave = application.isDoNotSave();
-    application.doNotSave(false);
-    try {
-      application.saveAll();
-      VirtualFile workspaceFile = ObjectUtils.assertNotNull(getProject().getWorkspaceFile());
+    UtilKt.runInAllowSaveMode(() -> {
+      application.saveAll(true);
+      VirtualFile workspaceFile = Objects.requireNonNull(getProject().getWorkspaceFile());
       PsiFile excluded = ObjectUtils.assertNotNull(PsiManager.getInstance(getProject()).findFile(workspaceFile));
 
       List<HighlightInfo> errors = highlightErrors();
@@ -2193,10 +2202,8 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
       UIUtil.dispatchAllInvocationEvents();
       scope = me.getFileDirtyScope(getEditor().getDocument(), Pass.UPDATE_ALL);
       assertNull(scope);
-    }
-    finally {
-      application.doNotSave(appSave);
-    }
+      return Unit.INSTANCE;
+    });
   }
 
   public void testLightBulbDoesNotUpdateIntentionsInEDT() {
@@ -2232,8 +2239,12 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
         UIUtil.dispatchAllInvocationEvents();
         caretLeft();
         DaemonProgressIndicator updateProgress = myDaemonCodeAnalyzer.getUpdateProgress();
-        while (myDaemonCodeAnalyzer.getUpdateProgress() == updateProgress) { // wait until daemon started
+        long waitForDaemonStart = System.currentTimeMillis();
+        while (myDaemonCodeAnalyzer.getUpdateProgress() == updateProgress && System.currentTimeMillis() < waitForDaemonStart + 5000) { // wait until daemon started
           UIUtil.dispatchAllInvocationEvents();
+        }
+        if (myDaemonCodeAnalyzer.getUpdateProgress() == updateProgress) {
+          throw new RuntimeException("Daemon failed to start in 5000 ms");
         }
         long start = System.currentTimeMillis();
         while (myDaemonCodeAnalyzer.isRunning() && System.currentTimeMillis() < start + 500) {

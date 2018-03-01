@@ -718,7 +718,7 @@ public class HighlightUtil extends HighlightUtilBase {
 
   @Nullable
   static HighlightInfo checkUnhandledExceptions(@NotNull final PsiElement element, @Nullable TextRange textRange) {
-    final List<PsiClassType> unhandledExceptions = ExceptionUtil.getUnhandledExceptions(element);
+    List<PsiClassType> unhandledExceptions = ExceptionUtil.getOwnUnhandledExceptions(element);
     if (unhandledExceptions.isEmpty()) return null;
 
     final HighlightInfoType highlightType = getUnhandledExceptionHighlightType(element);
@@ -1154,21 +1154,25 @@ public class HighlightUtil extends HighlightUtilBase {
       if (expr.getNextSibling() instanceof PsiErrorElement) return null;
 
       if (!TypeConversionUtil.isBooleanType(type)) {
-        final HighlightInfo info = createIncompatibleTypeHighlightInfo(PsiType.BOOLEAN, type, expr.getTextRange(), 0);
-        if (expr instanceof PsiMethodCallExpression) {
-          final PsiMethodCallExpression methodCall = (PsiMethodCallExpression)expr;
-          final PsiMethod method = methodCall.resolveMethod();
-          if (method != null && PsiType.VOID.equals(method.getReturnType())) {
-            QuickFixAction.registerQuickFixAction(info, QUICK_FIX_FACTORY.createMethodReturnFix(method, PsiType.BOOLEAN, true));
-          }
-        }
-        else if (expr instanceof PsiAssignmentExpression && ((PsiAssignmentExpression)expr).getOperationTokenType() == JavaTokenType.EQ) {
-          QuickFixAction.registerQuickFixAction(info, QUICK_FIX_FACTORY.createAssignmentToComparisonFix((PsiAssignmentExpression)expr));
-        }
-        return info;
+        return createMustBeBooleanInfo(expr, type);
       }
     }
     return null;
+  }
+
+  private static HighlightInfo createMustBeBooleanInfo(@NotNull PsiExpression expr, PsiType type) {
+    final HighlightInfo info = createIncompatibleTypeHighlightInfo(PsiType.BOOLEAN, type, expr.getTextRange(), 0);
+    if (expr instanceof PsiMethodCallExpression) {
+      final PsiMethodCallExpression methodCall = (PsiMethodCallExpression)expr;
+      final PsiMethod method = methodCall.resolveMethod();
+      if (method != null) {
+        QuickFixAction.registerQuickFixAction(info, QUICK_FIX_FACTORY.createMethodReturnFix(method, PsiType.BOOLEAN, true));
+      }
+    }
+    else if (expr instanceof PsiAssignmentExpression && ((PsiAssignmentExpression)expr).getOperationTokenType() == JavaTokenType.EQ) {
+      QuickFixAction.registerQuickFixAction(info, QUICK_FIX_FACTORY.createAssignmentToComparisonFix((PsiAssignmentExpression)expr));
+    }
+    return info;
   }
 
 
@@ -1430,6 +1434,12 @@ public class HighlightUtil extends HighlightUtilBase {
         HighlightInfo.newHighlightInfo(HighlightInfoType.ERROR).range(parentExpr).descriptionAndTooltip(message).create();
       if (parentExpr instanceof PsiPrefixExpression && token.getTokenType() == JavaTokenType.EXCL) {
         QuickFixAction.registerQuickFixAction(highlightInfo, QUICK_FIX_FACTORY.createNegationBroadScopeFix((PsiPrefixExpression)parentExpr));
+        if (expression instanceof PsiMethodCallExpression) {
+          PsiMethod method = ((PsiMethodCallExpression)expression).resolveMethod();
+          if (method != null) {
+            QuickFixAction.registerQuickFixAction(highlightInfo, QUICK_FIX_FACTORY.createMethodReturnFix(method, PsiType.BOOLEAN, true));
+          }
+        }
       }
       return highlightInfo;
     }
@@ -1644,13 +1654,13 @@ public class HighlightUtil extends HighlightUtilBase {
 
   private static ErrorWithFixes checkAccess(JavaModuleSystemEx system, PsiElement target, PsiElement place) {
     if (target instanceof PsiClass) return system.checkAccess((PsiClass)target, place);
-    if (target instanceof PsiPackage) return system.checkAccess((PsiPackage)target, place);
+    if (target instanceof PsiPackage) return system.checkAccess(((PsiPackage)target).getQualifiedName(), null, place);
     return null;
   }
 
   private static boolean isAccessible(JavaModuleSystem system, PsiElement target, PsiElement place) {
     if (target instanceof PsiClass) return system.isAccessible((PsiClass)target, place);
-    if (target instanceof PsiPackage) return system.isAccessible((PsiPackage)target, place);
+    if (target instanceof PsiPackage) return system.isAccessible(((PsiPackage)target).getQualifiedName(), null, place);
     return true;
   }
 
@@ -2122,7 +2132,7 @@ public class HighlightUtil extends HighlightUtilBase {
                                                                             @NotNull PsiClass referencedClass,
                                                                             final String resolvedName,
                                                                             @NotNull PsiFile containingFile) {
-    if (PsiTreeUtil.getParentOfType(expression, PsiReferenceParameterList.class) != null) return null;
+    if (PsiTreeUtil.getParentOfType(expression, PsiReferenceParameterList.class, true, PsiExpression.class) != null) return null;
     PsiElement element = expression.getParent();
     while (element != null) {
       // check if expression inside super()/this() call
@@ -2395,7 +2405,7 @@ public class HighlightUtil extends HighlightUtilBase {
   static HighlightInfo checkTernaryOperatorConditionIsBoolean(@NotNull PsiExpression expression, PsiType type) {
     if (expression.getParent() instanceof PsiConditionalExpression &&
         ((PsiConditionalExpression)expression.getParent()).getCondition() == expression && !TypeConversionUtil.isBooleanType(type)) {
-      return createIncompatibleTypeHighlightInfo(PsiType.BOOLEAN, type, expression.getTextRange(), 0);
+      return createMustBeBooleanInfo(expression, type);
     }
     return null;
   }

@@ -134,6 +134,10 @@ public class PythonScriptCommandLineState extends PythonCommandLineState {
         return null;
       }
       runner.getPydevConsoleCommunication().setConsoleView(runner.getConsoleView());
+
+      runner.getConsoleView().addConsoleFolding(false);
+      runner.getConsoleView().applySoftWrapping();
+
       List<AnAction> actions = Lists.newArrayList(createActions(runner.getConsoleView(), runner.getProcessHandler()));
       actions.add(new ShowVarsAction(runner.getConsoleView(), runner.getPydevConsoleCommunication()));
 
@@ -248,8 +252,8 @@ public class PythonScriptCommandLineState extends PythonCommandLineState {
    */
   public class PythonScriptWithConsoleRunner extends PydevConsoleRunnerImpl {
 
-    private CommandLinePatcher[] myPatchers;
-    private String PYDEV_RUN_IN_CONSOLE_PY = "pydev/pydev_run_in_console.py";
+    private final CommandLinePatcher[] myPatchers;
+    private final String PYDEV_RUN_IN_CONSOLE_PY = "pydev/pydev_run_in_console.py";
 
     public PythonScriptWithConsoleRunner(@NotNull Project project,
                                          @NotNull Sdk sdk,

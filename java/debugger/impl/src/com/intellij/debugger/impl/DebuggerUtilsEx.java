@@ -6,6 +6,7 @@
  */
 package com.intellij.debugger.impl;
 
+import com.intellij.application.options.CodeStyle;
 import com.intellij.debugger.DebuggerBundle;
 import com.intellij.debugger.SourcePosition;
 import com.intellij.debugger.engine.*;
@@ -44,7 +45,6 @@ import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.pom.Navigatable;
 import com.intellij.psi.*;
-import com.intellij.psi.codeStyle.CodeStyleSettingsManager;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.ui.classFilter.ClassFilter;
 import com.intellij.ui.content.Content;
@@ -204,7 +204,7 @@ public abstract class DebuggerUtilsEx extends DebuggerUtils {
     int i;
     for (i = 0; signature.charAt(i) == '['; i++) ;
     if (i == 0) return false;
-    signature = signature.substring(i, signature.length());
+    signature = signature.substring(i);
     return myCharOrIntegers.contains(signature);
   }
 
@@ -544,11 +544,7 @@ public abstract class DebuggerUtilsEx extends DebuggerUtils {
   }
 
   public static String methodNameWithArguments(Method m) {
-    return m.name() + "(" + StringUtil.join(m.argumentTypeNames(), DebuggerUtilsEx::getSimpleName, ", ") + ")";
-  }
-
-  public static String getSimpleName(String fqn) {
-    return fqn.substring(fqn.lastIndexOf('.') + 1);
+    return m.name() + "(" + StringUtil.join(m.argumentTypeNames(), StringUtil::getShortName, ", ") + ")";
   }
 
   public static String methodName(final Method m) {
@@ -730,7 +726,7 @@ public abstract class DebuggerUtilsEx extends DebuggerUtils {
   public static String prepareValueText(String text, Project project) {
     text = StringUtil.unquoteString(text);
     text = StringUtil.unescapeStringCharacters(text);
-    int tabSize = CodeStyleSettingsManager.getSettings(project).getTabSize(StdFileTypes.JAVA);
+    int tabSize = CodeStyle.getSettings(project).getTabSize(StdFileTypes.JAVA);
     if (tabSize < 0) {
       tabSize = 0;
     }

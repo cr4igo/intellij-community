@@ -64,8 +64,7 @@ public class DataFlowInspection8Test extends DataFlowInspectionTestCase {
 
   public void testOptionalOfNullable() { doTest(); }
   public void testOptionalOrElse() { doTest(); }
-  public void testOptionalIsPresent() { doTest(); }
-  public void testOptionalGetWithoutIsPresent() {
+  public void testOptionalIsPresent() {
     myFixture.addClass("package org.junit;" +
                        "public class Assert {" +
                        "  public static void assertTrue(boolean b) {}" +
@@ -195,6 +194,7 @@ public class DataFlowInspection8Test extends DataFlowInspectionTestCase {
     doTest();
   }
   public void testStreamInlining() { doTest(); }
+  public void testStreamCollectorInlining() { doTest(); }
   public void testStreamComparatorInlining() { doTest(); }
   public void testStreamKnownSource() { doTest(); }
   
